@@ -100,15 +100,6 @@ async def play(interaction: discord.Interaction):
     # Ghi nhận thời gian chơi vào cooldown
     cooldowns[user_id] = current_time
 
-    # Lưu ván chơi vào games trước khi tạo task timeout
-    games[user_id] = {
-        "answer": secret,
-        "guesses": [],
-        "attempts": 0,
-        "message_obj": main_msg,
-        "timeout_task": None
-    }
-
     # Tạo đối tượng quản lý timeout ván đấu (5 phút = 300 giây)
     async def timeout_task():
         await asyncio.sleep(300)
@@ -126,9 +117,16 @@ async def play(interaction: discord.Interaction):
                 await main_msg.edit(embed=timeout_embed)
             except:
                 pass
-            del games[user_id]
+            games.pop(user_id, None)
 
-    games[user_id]["timeout_task"] = asyncio.create_task(timeout_task())
+    # Lưu ván chơi vào dictionary
+    games[user_id] = {
+        "answer": secret,
+        "guesses": [],
+        "attempts": 0,
+        "message_obj": main_msg,
+        "timeout_task": asyncio.create_task(timeout_task())
+    }
 
 
 # 3. Lệnh Đoán từ
@@ -160,7 +158,8 @@ async def guess(interaction: discord.Interaction, dudoan: str):
         main_msg = game["message_obj"]
 
         if user_guess == game["answer"]:
-            game["timeout_task"].cancel()
+            if game["timeout_task"]:
+                game["timeout_task"].cancel()
             
             win_embed = discord.Embed(
                 title="🎮 WORDLE GAME",
@@ -171,10 +170,11 @@ async def guess(interaction: discord.Interaction, dudoan: str):
             
             await main_msg.edit(embed=win_embed)
             await interaction.followup.send("Đoán chính xác!", ephemeral=True)
-            del games[user_id]
+            games.pop(user_id, None)
 
         elif game["attempts"] >= 6:
-            game["timeout_task"].cancel()
+            if game["timeout_task"]:
+                game["timeout_task"].cancel()
             
             lose_embed = discord.Embed(
                 title="🎮 WORDLE GAME",
@@ -185,7 +185,7 @@ async def guess(interaction: discord.Interaction, dudoan: str):
             
             await main_msg.edit(embed=lose_embed)
             await interaction.followup.send("Rất tiếc, bạn đã thua!", ephemeral=True)
-            del games[user_id]
+            games.pop(user_id, None)
 
         else:
             play_embed = discord.Embed(
