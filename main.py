@@ -96,7 +96,7 @@ async def play(interaction: discord.Interaction):
     # Tạo đối tượng quản lý timeout ván đấu (5 phút = 300 giây)
     async def timeout_task():
         await asyncio.sleep(300)
-        if user_id in games and games[user_id]["message_id"] == main_msg.id:
+        if user_id in games and games[user_id]["message_obj"].id == main_msg.id:
             expired_board = render_board(games[user_id]["guesses"], games[user_id]["answer"])
             try:
                 await main_msg.edit(content=f"<@{user_id}> is playing\n```\n{expired_board}\n```\n⏰ **Timed out! Hết 5 phút không chơi, ván đấu đã bị hủy. Đáp án là: `{games[user_id]['answer']}`**")
@@ -106,12 +106,12 @@ async def play(interaction: discord.Interaction):
 
     task_obj = asyncio.create_task(timeout_task())
 
+    # Lưu trực tiếp main_msg object vào game dict
     games[user_id] = {
         "answer": secret,
         "guesses": [],
         "attempts": 0,
-        "message_id": main_msg.id,
-        "channel_id": interaction.channel_id,
+        "message_obj": main_msg,
         "timeout_task": task_obj
     }
 
@@ -142,20 +142,9 @@ async def guess(interaction: discord.Interaction, dudoan: str):
     new_board = render_board(game["guesses"], game["answer"])
 
     try:
-        # Lấy channel an toàn không lo bị NoneType dù ở DM hay Server
-        channel = interaction.channel
-        if channel is None:
-            channel = bot.get_channel(game["channel_id"])
-        if channel is None:
-            try:
-                channel = await bot.fetch_channel(game["channel_id"])
-            except:
-                channel = await interaction.user.create_dm()
-
-        main_msg = await channel.fetch_message(game["message_id"])
+        main_msg = game["message_obj"]
 
         if user_guess == game["answer"]:
-            # Hủy task timeout nếu đã kết thúc game
             game["timeout_task"].cancel()
             content = f"<@{user_id}> is playing\n```\n{new_board}\n```\n🎉 **Chúc mừng! Bạn đã thắng! Đáp án: `{game['answer']}`**"
             await main_msg.edit(content=content)
