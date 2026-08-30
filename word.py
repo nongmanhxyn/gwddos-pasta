@@ -4,5 +4,7 @@ answer = ["ABACK", "ABASE", "ABATE", "ABBEY", "ABBOT", "ABHOR", "ABIDE", "ABLED"
 import random
 
 def choose_answer():
-  aaa = random.choice(answer)
-  return aaa
+  return random.choice(answer)
+
+def check(word):
+  return word in allow_guessed or word in answer
