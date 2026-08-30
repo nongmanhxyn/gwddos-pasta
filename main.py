@@ -1,17 +1,22 @@
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
+import asyncio
 import os
+import time
 import word
 
 TOKEN = os.getenv("BOT_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="/", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Bộ lưu trữ ván chơi
+# Bộ lưu trữ ván chơi: { user_id: {data} }
 games = {}
+
+# Lưu mốc thời gian chơi gần nhất của từng user để check cooldown (1 tiếng): { user_id: timestamp }
+cooldowns = {}
 
 def render_board(guesses, target):
     lines = []
@@ -20,13 +25,13 @@ def render_board(guesses, target):
         t_list = list(target)
         g_list = list(g)
 
-        # Check chữ đúng vị trí (Xanh)
+        # Check xanh
         for i in range(5):
             if g_list[i] == t_list[i]:
                 res[i] = "🟩"
                 t_list[i] = None
 
-        # Check chữ có trong từ nhưng sai vị trí (Vàng)
+        # Check vàng
         for i in range(5):
             if res[i] != "🟩" and g_list[i] in t_list and g_list[i] is not None:
                 res[i] = "🟨"
@@ -34,56 +39,93 @@ def render_board(guesses, target):
 
         lines.append(f"{''.join(res)}  {g}")
 
-    # Đệm ô trống cho đủ 6 dòng
     while len(lines) < 6:
         lines.append("⬛⬛⬛⬛⬛")
 
     return "\n".join(lines)
 
 
-# 1. Lệnh bắt đầu chơi
+# Background task chạy ngầm mỗi 1 tiếng để dọn dẹp các user hết cooldown khỏi dict cho nhẹ RAM
+@tasks.loop(hours=1.0)
+async def clean_cooldowns():
+    current_time = time.time()
+    expired_users = [uid for uid, t in cooldowns.items() if current_time - t >= 3600]
+    for uid in expired_users:
+        del cooldowns[uid]
+
+
+# 1. Lệnh Ping check độ trễ
+@bot.tree.command(name="ping", description="Kiểm tra độ trễ của bot")
+async def ping(interaction: discord.Interaction):
+    latency = round(bot.latency * 1000)
+    await interaction.response.send_message(f"Pong! 🏓 (`{latency}ms`)", ephemeral=True)
+
+
+# 2. Lệnh Play (Có check Cooldown 1 tiếng & Timeout 5 phút tự động hủy)
 @bot.tree.command(name="play", description="Bắt đầu ván chơi Wordle")
 async def play(interaction: discord.Interaction):
     user_id = interaction.user.id
+    current_time = time.time()
+
+    # Kiểm tra Cooldown 1 tiếng
+    if user_id in cooldowns:
+        elapsed = current_time - cooldowns[user_id]
+        if elapsed < 3600:
+            remaining_min = math.ceil((3600 - elapsed) / 60) if 'math' in globals() else int((3600 - elapsed) // 60) + 1
+            await interaction.response.send_message(f"⏳ Bro đang trong thời gian chờ cooldown! Vui lòng đợi khoảng **{remaining_min} phút** nữa để chơi ván mới.", ephemeral=True)
+            return
 
     if user_id in games:
-        await interaction.response.send_message("Bro đang trong ván chơi rồi! Dùng `/guess` để đoán tiếp.", ephemeral=True)
+        await interaction.response.send_message("Bro đang có ván chơi dở dang! Dùng `/guess` để tiếp tục.", ephemeral=True)
         return
 
-    # Trả lời tạm thời để tránh bị timeout interaction 3s
     await interaction.response.defer()
 
     secret = word.choose_answer()
     board_text = render_board([], secret)
     content = f"<@{user_id}> is playing\n```\n{board_text}\n```\n👉 *Dùng lệnh `/guess <từ>` để đoán!*"
 
-    # Gửi tin nhắn chứa bàn chơi
     main_msg = await interaction.followup.send(content=content)
+
+    # Ghi nhận thời gian chơi vào cooldown
+    cooldowns[user_id] = current_time
+
+    # Tạo đối tượng quản lý timeout ván đấu (5 phút = 300 giây)
+    async def timeout_task():
+        await asyncio.sleep(300)
+        if user_id in games and games[user_id]["message_id"] == main_msg.id:
+            expired_board = render_board(games[user_id]["guesses"], games[user_id]["answer"])
+            try:
+                await main_msg.edit(content=f"<@{user_id}> is playing\n```\n{expired_board}\n```\n⏰ **Timed out! Hết 5 phút không chơi, ván đấu đã bị hủy. Đáp án là: `{games[user_id]['answer']}`**")
+            except:
+                pass
+            del games[user_id]
+
+    task_obj = asyncio.create_task(timeout_task())
 
     games[user_id] = {
         "answer": secret,
         "guesses": [],
         "attempts": 0,
         "message_id": main_msg.id,
-        "channel_id": interaction.channel_id
+        "channel_id": interaction.channel_id,
+        "timeout_task": task_obj
     }
 
 
-# 2. Lệnh đoán từ
+# 3. Lệnh Đoán từ
 @bot.tree.command(name="guess", description="Đoán từ trong ván chơi Wordle")
 @app_commands.describe(dudoan="Từ 5 chữ cái muốn đoán")
 async def guess(interaction: discord.Interaction, dudoan: str):
     user_id = interaction.user.id
     game = games.get(user_id)
 
-    # Detect chỉ người đang trong game mới đoán được
     if not game:
-        await interaction.response.send_message("Bro chưa tạo ván chơi! Hãy gõ `/play` để bắt đầu.", ephemeral=True)
+        await interaction.response.send_message("Bro chưa bắt đầu ván chơi nào! Gõ `/play` để chơi.", ephemeral=True)
         return
 
     user_guess = dudoan.strip().upper()
 
-    # Kiểm tra từ hợp lệ
     if len(user_guess) != 5 or not word.check(user_guess):
         await interaction.response.send_message(f"Từ `{user_guess}` không hợp lệ hoặc không có trong từ điển!", ephemeral=True)
         return
@@ -95,18 +137,20 @@ async def guess(interaction: discord.Interaction, dudoan: str):
 
     new_board = render_board(game["guesses"], game["answer"])
 
-    # Lấy lại tin nhắn bàn chơi để EDIT
     try:
         channel = bot.get_channel(game["channel_id"])
         main_msg = await channel.fetch_message(game["message_id"])
 
         if user_guess == game["answer"]:
+            # Hủy task timeout nếu đã kết thúc game
+            game["timeout_task"].cancel()
             content = f"<@{user_id}> is playing\n```\n{new_board}\n```\n🎉 **Chúc mừng! Bạn đã thắng! Đáp án: `{game['answer']}`**"
             await main_msg.edit(content=content)
             await interaction.followup.send("Đoán chính xác!", ephemeral=True)
             del games[user_id]
 
         elif game["attempts"] >= 6:
+            game["timeout_task"].cancel()
             content = f"<@{user_id}> is playing\n```\n{new_board}\n```\n💀 **Bạn đã hết lượt! Đáp án đúng là: `{game['answer']}`**"
             await main_msg.edit(content=content)
             await interaction.followup.send("Rất tiếc, bạn đã thua!", ephemeral=True)
@@ -115,20 +159,22 @@ async def guess(interaction: discord.Interaction, dudoan: str):
         else:
             content = f"<@{user_id}> is playing\n```\n{new_board}\n```\n👉 *Dùng lệnh `/guess <từ>` tiếp theo...*"
             await main_msg.edit(content=content)
-            await interaction.followup.send(f"Đã cập nhật lượt đoán `{user_guess}`!", ephemeral=True)
+            await interaction.followup.send(f"Đã nhận từ `{user_guess}`!", ephemeral=True)
 
     except Exception as e:
-        await interaction.followup.send(f"Lỗi cập nhật bàn chơi: {e}", ephemeral=True)
+        await interaction.followup.send(f"Lỗi: {e}", ephemeral=True)
 
 
 @bot.event
 async def on_ready():
-    print(f"Bot {bot.user} da online!")
+    print(f"Bot {bot.user} da online và sẵn sàng!")
+    if not clean_cooldowns.is_running():
+        clean_cooldowns.start()
     try:
         synced = await bot.tree.sync()
-        print(f"Da sync {len(synced)} lenh Slash!")
+        print(f"Đã sync {len(synced)} lệnh Slash!")
     except Exception as e:
-        print(f"Loi sync lenh: {e}")
+        print(f"Lỗi sync: {e}")
 
 if TOKEN:
     bot.run(TOKEN)
