@@ -181,4 +181,37 @@ async def guess(interaction: discord.Interaction, dudoan: str):
                 description=f"<@{user_id}> is playing\n\n{new_board}",
                 color=discord.Color.red()
             )
-            lose_embed.set_footer(
+            lose_embed.set_footer(text=f"💀 Hết lượt! Đáp án đúng là: {game['answer']}")
+            
+            await main_msg.edit(embed=lose_embed)
+            await interaction.followup.send("Rất tiếc, bạn đã thua!", ephemeral=True)
+            del games[user_id]
+
+        else:
+            play_embed = discord.Embed(
+                title="🎮 WORDLE GAME",
+                description=f"<@{user_id}> is playing\n\n{new_board}",
+                color=discord.Color.blue()
+            )
+            play_embed.set_footer(text="👉 Dùng lệnh /guess <từ> tiếp theo...")
+            
+            await main_msg.edit(embed=play_embed)
+            await interaction.followup.send(f"Đã nhận từ `{user_guess}`!", ephemeral=True)
+
+    except Exception as e:
+        await interaction.followup.send(f"Lỗi: {e}", ephemeral=True)
+
+
+@bot.event
+async def on_ready():
+    print(f"Bot {bot.user} da online và sẵn sàng!")
+    if not clean_cooldowns.is_running():
+        clean_cooldowns.start()
+    try:
+        synced = await bot.tree.sync()
+        print(f"Đã sync {len(synced)} lệnh Slash!")
+    except Exception as e:
+        print(f"Lỗi sync: {e}")
+
+if TOKEN:
+    bot.run(TOKEN)
