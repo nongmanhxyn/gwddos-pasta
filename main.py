@@ -100,6 +100,15 @@ async def play(interaction: discord.Interaction):
     # Ghi nhận thời gian chơi vào cooldown
     cooldowns[user_id] = current_time
 
+    # Lưu ván chơi vào games trước khi tạo task timeout
+    games[user_id] = {
+        "answer": secret,
+        "guesses": [],
+        "attempts": 0,
+        "message_obj": main_msg,
+        "timeout_task": None
+    }
+
     # Tạo đối tượng quản lý timeout ván đấu (5 phút = 300 giây)
     async def timeout_task():
         await asyncio.sleep(300)
@@ -119,16 +128,7 @@ async def play(interaction: discord.Interaction):
                 pass
             del games[user_id]
 
-    task_obj = asyncio.create_task(timeout_task())
-
-    # Lưu trực tiếp main_msg object vào game dict
-    games[user_id] = {
-        "answer": secret,
-        "guesses": [],
-        "attempts": 0,
-        "message_obj": main_msg,
-        "timeout_task": task_obj
-    }
+    games[user_id]["timeout_task"] = asyncio.create_task(timeout_task())
 
 
 # 3. Lệnh Đoán từ
