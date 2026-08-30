@@ -38,10 +38,10 @@ def render_board(guesses, target):
                 res[i] = "🟨"
                 t_list[t_list.index(g_list[i])] = None
 
-        lines.append(f"{''.join(res)}  {g}")
+        lines.append(f"{' '.join(res)}   **{g}**")
 
     while len(lines) < 6:
-        lines.append("⬛⬛⬛⬛⬛")
+        lines.append("⬛ ⬛ ⬛ ⬛ ⬛")
 
     return "\n".join(lines)
 
@@ -86,9 +86,16 @@ async def play(interaction: discord.Interaction):
 
     secret = word.choose_answer()
     board_text = render_board([], secret)
-    content = f"<@{user_id}> is playing\n```\n{board_text}\n```\n👉 *Dùng lệnh `/guess <từ>` để đoán!*"
+    
+    # Tạo Embed cho ván mới
+    embed = discord.Embed(
+        title="🎮 WORDLE GAME",
+        description=f"<@{user_id}> is playing\n\n{board_text}",
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text="👉 Dùng lệnh /guess <từ> để đoán!")
 
-    main_msg = await interaction.followup.send(content=content)
+    main_msg = await interaction.followup.send(embed=embed)
 
     # Ghi nhận thời gian chơi vào cooldown
     cooldowns[user_id] = current_time
@@ -98,8 +105,16 @@ async def play(interaction: discord.Interaction):
         await asyncio.sleep(300)
         if user_id in games and games[user_id]["message_obj"].id == main_msg.id:
             expired_board = render_board(games[user_id]["guesses"], games[user_id]["answer"])
+            
+            timeout_embed = discord.Embed(
+                title="🎮 WORDLE GAME",
+                description=f"<@{user_id}> is playing\n\n{expired_board}",
+                color=discord.Color.red()
+            )
+            timeout_embed.set_footer(text=f"⏰ Timed out! Đáp án là: {games[user_id]['answer']}")
+            
             try:
-                await main_msg.edit(content=f"<@{user_id}> is playing\n```\n{expired_board}\n```\n⏰ **Timed out! Hết 5 phút không chơi, ván đấu đã bị hủy. Đáp án là: `{games[user_id]['answer']}`**")
+                await main_msg.edit(embed=timeout_embed)
             except:
                 pass
             del games[user_id]
@@ -146,37 +161,24 @@ async def guess(interaction: discord.Interaction, dudoan: str):
 
         if user_guess == game["answer"]:
             game["timeout_task"].cancel()
-            content = f"<@{user_id}> is playing\n```\n{new_board}\n```\n🎉 **Chúc mừng! Bạn đã thắng! Đáp án: `{game['answer']}`**"
-            await main_msg.edit(content=content)
+            
+            win_embed = discord.Embed(
+                title="🎮 WORDLE GAME",
+                description=f"<@{user_id}> is playing\n\n{new_board}",
+                color=discord.Color.green()
+            )
+            win_embed.set_footer(text=f"🎉 Chúc mừng! Bạn đã thắng! Đáp án: {game['answer']}")
+            
+            await main_msg.edit(embed=win_embed)
             await interaction.followup.send("Đoán chính xác!", ephemeral=True)
             del games[user_id]
 
         elif game["attempts"] >= 6:
             game["timeout_task"].cancel()
-            content = f"<@{user_id}> is playing\n```\n{new_board}\n```\n💀 **Bạn đã hết lượt! Đáp án đúng là: `{game['answer']}`**"
-            await main_msg.edit(content=content)
-            await interaction.followup.send("Rất tiếc, bạn đã thua!", ephemeral=True)
-            del games[user_id]
-
-        else:
-            content = f"<@{user_id}> is playing\n```\n{new_board}\n```\n👉 *Dùng lệnh `/guess <từ>` tiếp theo...*"
-            await main_msg.edit(content=content)
-            await interaction.followup.send(f"Đã nhận từ `{user_guess}`!", ephemeral=True)
-
-    except Exception as e:
-        await interaction.followup.send(f"Lỗi: {e}", ephemeral=True)
-
-
-@bot.event
-async def on_ready():
-    print(f"Bot {bot.user} da online và sẵn sàng!")
-    if not clean_cooldowns.is_running():
-        clean_cooldowns.start()
-    try:
-        synced = await bot.tree.sync()
-        print(f"Đã sync {len(synced)} lệnh Slash!")
-    except Exception as e:
-        print(f"Lỗi sync: {e}")
-
-if TOKEN:
-    bot.run(TOKEN)
+            
+            lose_embed = discord.Embed(
+                title="🎮 WORDLE GAME",
+                description=f"<@{user_id}> is playing\n\n{new_board}",
+                color=discord.Color.red()
+            )
+            lose_embed.set_footer(
