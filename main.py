@@ -14,7 +14,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 games = {}
-matches = {}  # Lưu kèo đấu Versus
+matches = {}
 cooldowns = {}
 
 def render_board(guesses, target):
@@ -43,8 +43,8 @@ def render_board(guesses, target):
 
 
 def render_match_embed(match):
-    p1 = match["p1"]
-    p2 = match["p2"]
+    p1_name = match["p1_name"]
+    p2_name = match["p2_name"]
     
     p1_board = render_board(match["p1_guesses"], match["p1_answer"])
     p2_board = render_board(match["p2_guesses"], match["p2_answer"])
@@ -53,32 +53,38 @@ def render_match_embed(match):
     color = discord.Color.blue()
     
     if match["status"] == "ended":
-        color = discord.Color.gold() if match["winner"] else discord.Color.dark_grey()
-        if match["winner"]:
-            status_text = f"🏆 **<@{match['winner']}> WON THE MATCH!**"
+        color = discord.Color.gold() if match["winner_name"] else discord.Color.dark_grey()
+        if match["winner_name"]:
+            status_text = f"🏆 **{match['winner_name']} WON THE MATCH!**"
         else:
-            status_text = "🤝 **DRAW! Both players ran out of attempts or timed out.**"
+            status_text = "🤝 **DRAW! Both players ran out of attempts.**"
             
         p1_board += f"\n*Answer: `{match['p1_answer']}`*"
         p2_board += f"\n*Answer: `{match['p2_answer']}`*"
 
+    # Layout xếp dọc toàn bộ trong description
+    desc = (
+        f"{status_text}\n\n"
+        f"👤 **{p1_name}**\n"
+        f"{p1_board}\n\n"
+        f"───────────────\n\n"
+        f"👤 **{p2_name}**\n"
+        f"{p2_board}"
+    )
+
     embed = discord.Embed(
         title="⚔️ WORDLE VERSUS DUEL ⚔️",
-        description=status_text,
+        description=desc,
         color=color
     )
-    embed.add_field(name=f"👤 <@{p1}>", value=p1_board, inline=True)
-    embed.add_field(name=" VS ", value="⚡", inline=True)
-    embed.add_field(name=f"👤 <@{p2}>", value=p2_board, inline=True)
     embed.set_footer(text="Both players have different secret words for fairness!")
     
     return embed
 
 
-# UI Nút bấm Accept/Deny Lời thách đấu
 class ChallengeView(discord.ui.View):
     def __init__(self, challenger: discord.User, opponent: discord.User):
-        super().__init__(timeout=300) # 5 phút
+        super().__init__(timeout=300)
         self.challenger = challenger
         self.opponent = opponent
 
@@ -91,21 +97,20 @@ class ChallengeView(discord.ui.View):
         p1_id = self.challenger.id
         p2_id = self.opponent.id
 
-        # Kiểm tra dính ván đơn lẻ
         if p1_id in games or p2_id in games:
             await interaction.response.send_message("One of the players is currently in another match!", ephemeral=True)
             return
 
-        await interaction.response.defer()
         self.stop()
 
-        # Tạo kèo Versus
         p1_ans = word.choose_answer()
         p2_ans = word.choose_answer()
 
         match_data = {
             "p1": p1_id,
             "p2": p2_id,
+            "p1_name": self.challenger.display_name,
+            "p2_name": self.opponent.display_name,
             "p1_answer": p1_ans,
             "p2_answer": p2_ans,
             "p1_guesses": [],
@@ -113,15 +118,21 @@ class ChallengeView(discord.ui.View):
             "p1_done": False,
             "p2_done": False,
             "status": "playing",
-            "winner": None,
+            "winner_name": None,
             "message_obj": None
         }
 
         embed = render_match_embed(match_data)
-        main_msg = await interaction.followup.send(content=f"<@{p1_id}> <@{p2_id}> The duel has begun!", embed=embed)
-        match_data["message_obj"] = main_msg
+        
+        # Sửa trực tiếp message gốc (giữ tag @user ở content, xoá nút view)
+        await interaction.response.edit_message(
+            content=f"<@{p1_id}> <@{p2_id}> The duel has begun!", 
+            embed=embed, 
+            view=None
+        )
+        
+        match_data["message_obj"] = await interaction.original_response()
 
-        # Đăng ký session chơi
         matches[p1_id] = match_data
         matches[p2_id] = match_data
         games[p1_id] = {"type": "versus"}
@@ -136,7 +147,7 @@ class ChallengeView(discord.ui.View):
         self.stop()
         embed = discord.Embed(
             title="⚔️ VERSUS DUEL DECLINED",
-            description=f"<@{self.opponent.id}> declined the challenge from <@{self.challenger.id}>.",
+            description=f"**{self.opponent.display_name}** declined the challenge from **{self.challenger.display_name}**.",
             color=discord.Color.red()
         )
         await interaction.response.edit_message(content=None, embed=embed, view=None)
@@ -144,7 +155,7 @@ class ChallengeView(discord.ui.View):
     async def on_timeout(self):
         embed = discord.Embed(
             title="⚔️ VERSUS DUEL TIMED OUT",
-            description=f"The challenge from <@{self.challenger.id}> to <@{self.opponent.id}> has expired.",
+            description=f"The challenge from **{self.challenger.display_name}** to **{self.opponent.display_name}** has expired.",
             color=discord.Color.dark_grey()
         )
         try:
@@ -168,7 +179,6 @@ async def ping(interaction: discord.Interaction):
     await interaction.response.send_message(f"Pong! 🏓 (`{latency}ms`)", ephemeral=True)
 
 
-# Lệnh Thách Đấu /match
 @bot.tree.command(name="match", description="Challenge another user to a Wordle Duel!")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.describe(opponent="The user you want to challenge")
@@ -188,7 +198,7 @@ async def match(interaction: discord.Interaction, opponent: discord.User):
     
     embed = discord.Embed(
         title="⚔️ WORDLE VERSUS CHALLENGE",
-        description=f"<@{interaction.user.id}> has challenged <@{opponent.id}> to a Versus Duel!\n\n"
+        description=f"**{interaction.user.display_name}** has challenged **{opponent.display_name}** to a Versus Duel!\n\n"
                     f"**Rules:**\n"
                     f"• Both players get different secret words.\n"
                     f"• First player to guess their word correctly wins!\n"
@@ -224,7 +234,7 @@ async def play(interaction: discord.Interaction):
     
     embed = discord.Embed(
         title="🎮 WORDLE GAME",
-        description=f"<@{user_id}> is playing\n\n{board_text}",
+        description=f"**{interaction.user.display_name}** is playing\n\n{board_text}",
         color=discord.Color.blue()
     )
     embed.set_footer(text="👉 Use /guess <word> to place your guess!")
@@ -239,7 +249,7 @@ async def play(interaction: discord.Interaction):
             
             timeout_embed = discord.Embed(
                 title="🎮 WORDLE GAME",
-                description=f"<@{user_id}> is playing\n\n{expired_board}",
+                description=f"**{interaction.user.display_name}** is playing\n\n{expired_board}",
                 color=discord.Color.red()
             )
             timeout_embed.set_footer(text=f"⏰ Timed out! The answer was: {games[user_id]['answer']}")
@@ -260,7 +270,6 @@ async def play(interaction: discord.Interaction):
     }
 
 
-# Lệnh Guess chung cho cả Solo và Versus
 @bot.tree.command(name="guess", description="Guess a 5-letter word")
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.describe(dudoan="Your 5-letter word guess")
@@ -280,7 +289,6 @@ async def guess(interaction: discord.Interaction, dudoan: str):
 
     await interaction.response.defer(ephemeral=True)
 
-    # XL VÁN THÁCH ĐẤU (VERSUS)
     if game.get("type") == "versus":
         match_data = matches.get(user_id)
         if not match_data or match_data["status"] == "ended":
@@ -298,7 +306,6 @@ async def guess(interaction: discord.Interaction, dudoan: str):
 
         guesses.append(user_guess)
         
-        # Check Win / Fail
         if user_guess == target:
             if is_p1:
                 match_data["p1_done"] = True
@@ -306,7 +313,7 @@ async def guess(interaction: discord.Interaction, dudoan: str):
                 match_data["p2_done"] = True
             
             match_data["status"] = "ended"
-            match_data["winner"] = user_id
+            match_data["winner_name"] = match_data["p1_name"] if is_p1 else match_data["p2_name"]
 
         elif len(guesses) >= 6:
             if is_p1:
@@ -314,18 +321,15 @@ async def guess(interaction: discord.Interaction, dudoan: str):
             else:
                 match_data["p2_done"] = True
 
-            # Nếu cả 2 đều hết lượt mà chưa ai thắng -> Hòa
             if match_data["p1_done"] and match_data["p2_done"]:
                 match_data["status"] = "ended"
 
-        # Update Bảng Embed Chung
         updated_embed = render_match_embed(match_data)
         try:
             await match_data["message_obj"].edit(embed=updated_embed)
         except:
             pass
 
-        # Dọn dẹp RAM nếu kết thúc
         if match_data["status"] == "ended":
             games.pop(match_data["p1"], None)
             games.pop(match_data["p2"], None)
@@ -335,7 +339,6 @@ async def guess(interaction: discord.Interaction, dudoan: str):
         await interaction.followup.send(f"Received word `{user_guess}`!", ephemeral=True)
         return
 
-    # XL VÁN ĐƠN (SOLO)
     game["guesses"].append(user_guess)
     game["attempts"] += 1
     new_board = render_board(game["guesses"], game["answer"])
@@ -349,7 +352,7 @@ async def guess(interaction: discord.Interaction, dudoan: str):
             
             win_embed = discord.Embed(
                 title="🎮 WORDLE GAME",
-                description=f"<@{user_id}> is playing\n\n{new_board}",
+                description=f"**{interaction.user.display_name}** is playing\n\n{new_board}",
                 color=discord.Color.green()
             )
             win_embed.set_footer(text=f"🎉 Congratulations! You won! Answer: {game['answer']}")
@@ -364,7 +367,7 @@ async def guess(interaction: discord.Interaction, dudoan: str):
             
             lose_embed = discord.Embed(
                 title="🎮 WORDLE GAME",
-                description=f"<@{user_id}> is playing\n\n{new_board}",
+                description=f"**{interaction.user.display_name}** is playing\n\n{new_board}",
                 color=discord.Color.red()
             )
             lose_embed.set_footer(text=f"💀 Out of attempts! The correct answer was: {game['answer']}")
@@ -376,7 +379,7 @@ async def guess(interaction: discord.Interaction, dudoan: str):
         else:
             play_embed = discord.Embed(
                 title="🎮 WORDLE GAME",
-                description=f"<@{user_id}> is playing\n\n{new_board}",
+                description=f"**{interaction.user.display_name}** is playing\n\n{new_board}",
                 color=discord.Color.blue()
             )
             play_embed.set_footer(text="👉 Use /guess <word> for your next guess...")
