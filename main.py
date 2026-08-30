@@ -74,7 +74,7 @@ async def play(interaction: discord.Interaction):
     if user_id in cooldowns:
         elapsed = current_time - cooldowns[user_id]
         if elapsed < 3600:
-            remaining_min = math.ceil((3600 - elapsed) / 60) if 'math' in globals() else int((3600 - elapsed) // 60) + 1
+            remaining_min = math.ceil((3600 - elapsed) / 60)
             await interaction.response.send_message(f"⏳ Bro đang trong thời gian chờ cooldown! Vui lòng đợi khoảng **{remaining_min} phút** nữa để chơi ván mới.", ephemeral=True)
             return
 
@@ -142,7 +142,16 @@ async def guess(interaction: discord.Interaction, dudoan: str):
     new_board = render_board(game["guesses"], game["answer"])
 
     try:
-        channel = bot.get_channel(game["channel_id"])
+        # Lấy channel an toàn không lo bị NoneType dù ở DM hay Server
+        channel = interaction.channel
+        if channel is None:
+            channel = bot.get_channel(game["channel_id"])
+        if channel is None:
+            try:
+                channel = await bot.fetch_channel(game["channel_id"])
+            except:
+                channel = await interaction.user.create_dm()
+
         main_msg = await channel.fetch_message(game["message_id"])
 
         if user_guess == game["answer"]:
