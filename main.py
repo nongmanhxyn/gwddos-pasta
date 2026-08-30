@@ -45,7 +45,7 @@ def render_board(guesses, target):
     return "\n".join(lines)
 
 
-# Background task chạy ngầm mỗi 1 tiếng để dọn dẹp các user hết cooldown khỏi dict cho nhẹ RAM
+# task định kỳ --> tránh nặng ram
 @tasks.loop(hours=1.0)
 async def clean_cooldowns():
     current_time = time.time()
@@ -55,14 +55,16 @@ async def clean_cooldowns():
 
 
 # 1. Lệnh Ping check độ trễ
-@bot.tree.command(name="ping", description="Kiểm tra độ trễ của bot")
+@bot.tree.command(name="ping", description="ping pong🏓")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 async def ping(interaction: discord.Interaction):
     latency = round(bot.latency * 1000)
     await interaction.response.send_message(f"Pong! 🏓 (`{latency}ms`)", ephemeral=True)
 
 
 # 2. Lệnh Play (Có check Cooldown 1 tiếng & Timeout 5 phút tự động hủy)
-@bot.tree.command(name="play", description="Bắt đầu ván chơi Wordle")
+@bot.tree.command(name="play", description="Start wordle?")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 async def play(interaction: discord.Interaction):
     user_id = interaction.user.id
     current_time = time.time()
@@ -114,7 +116,8 @@ async def play(interaction: discord.Interaction):
 
 
 # 3. Lệnh Đoán từ
-@bot.tree.command(name="guess", description="Đoán từ trong ván chơi Wordle")
+@bot.tree.command(name="guess", description="Guess word")
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.describe(dudoan="Từ 5 chữ cái muốn đoán")
 async def guess(interaction: discord.Interaction, dudoan: str):
     user_id = interaction.user.id
